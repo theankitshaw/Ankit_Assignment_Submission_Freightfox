@@ -1,7 +1,8 @@
 """
-Shipment Analytics Dashboard — FreightFox take-home assignment
-Run locally with: streamlit run app.py
+Shipment Analytics Dashboard — FreightFox Take-Home Assignment
+Run locally:  streamlit run app.py
 """
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,70 +12,66 @@ from clean_data import load_and_clean
 
 st.set_page_config(page_title="Shipment Analytics — FreightFox", layout="wide")
 
-# ----------------------------------------------------------------------------
-# Load data
-# ----------------------------------------------------------------------------
+# ---------- Load & cache data ----------
 @st.cache_data
 def get_data():
-    df, report = load_and_clean("data/shipments.csv")
-    return df, report
+    return load_and_clean("data/shipments.csv")
 
 df, quality_report = get_data()
 valid = df[df["valid_for_delay_analysis"]]
-reliable = valid[valid["region"] != "South"]  # South excluded — see Data Quality tab
+reliable = valid[valid["region"] != "South"]
 
-st.title("🚚 Shipment Analytics — FreightFox")
-st.caption(
-    "All on-time/SLA metrics below are computed from `actual_delivery_date` vs "
-    "`promised_delivery_date` — never from the `status` field, which disagrees "
-    "with actual outcomes in 35% of rows. See the **Data Quality** tab for why."
-)
+st.title("🚚 Shipment Analytics Dashboard")
+st.caption("FreightFox take-home assignment — all metrics computed from `actual_delivery_date` vs "
+           "`promised_delivery_date`, not the `status` label (see Data Quality tab for why).")
 
-tab_overview, tab_region, tab_cost, tab_customer, tab_quality = st.tabs(
-    ["📊 Overview", "🗺️ Region (Q1)", "💰 Cost vs Distance (Q2)", "👥 Customers (Q3)", "🧹 Data Quality (Q4)"]
-)
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📦 Data Quality", "🗺️ Region & On-Time Performance",
+    "💰 Freight Cost vs Distance", "👥 Customer Delays"
+])
 
-# ----------------------------------------------------------------------------
-# TAB: Overview
-# ----------------------------------------------------------------------------
-with tab_overview:
+# ================= TAB 1: DATA QUALITY =================
+with tab1:
+    st.header("Data Quality Findings")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total shipments (raw)", f"{quality_report['n_raw_rows']:,}")
-    c2.metric("Clean rows", f"{quality_report['n_after_dedup']:,}")
-    c3.metric("Valid for delay analysis", f"{quality_report['n_valid_for_delay_analysis']:,}",
-              f"{quality_report['n_valid_for_delay_analysis']/quality_report['n_after_dedup']*100:.0f}% of clean rows")
-    overall_breach = (valid["delay_days"] > 0).mean() * 100
-    c4.metric("Overall breach rate (reliable data)", f"{overall_breach:.1f}%")
+    c1.metric("Raw rows", quality_report["n_raw_rows"])
+    c2.metric("Exact duplicates dropped", quality_report["n_exact_duplicates_dropped"])
+    c3.metric("Rows usable for delay analysis", quality_report["n_valid_for_delay_analysis"],
+               help="After excluding impossible dates and completed shipments missing an actual delivery date")
+    c4.metric("Status vs. date mismatches", quality_report["n_status_vs_date_mismatch"])
 
-    st.subheader("Weekly tracking recommendation (Q5)")
-    st.info(
-        "**Track on-time delivery rate by carrier, weekly — not one blended company-wide number.** "
-        "Carrier effects are large and real (15pp spread); region and customer effects tested out as noise. "
-        "Pair it with a mandatory guardrail: % of shipments missing a logged `actual_delivery_date` within "
-        "N days of promised date — this is exactly the check that would have caught South's broken pipeline."
-    )
+    st.subheader("Key issues")
+    st.markdown(f"""
+- **`delivery_date` is 100% redundant** — it equals `promised_delivery_date` in
+  **{quality_report['delivery_date_equals_promised_pct']}%** of rows. It is not used anywhere in this analysis;
+  `actual_delivery_date` is the real outcome field.
+- **The `status` label disagrees with date-derived reality** in **{quality_report['n_status_vs_date_mismatch']}**
+  rows — e.g. shipments marked "Delivered" that were actually late per the dates. All on-time/SLA metrics
+  here are computed from dates, never from `status`.
+- **{quality_report['n_completed_missing_actual_date']} "Delivered"/"Delayed" shipments have no
+  `actual_delivery_date` logged** — see below, this is concentrated almost entirely in one region.
+- **{quality_report['n_impossible_date_rows']} rows have logically impossible dates**
+  (delivered before pickup/booking) — excluded from time-based analysis.
+""")
 
-    st.subheader("Carrier breach rate — the dominant, real signal")
-    carrier_perf = reliable.groupby("carrier_id").agg(
-        n=("shipment_id", "count"),
-        breach_pct=("delay_days", lambda x: (x > 0).mean() * 100),
-    ).sort_values("breach_pct", ascending=False)
-    st.bar_chart(carrier_perf["breach_pct"])
-    st.caption("CARR_02 shows the highest breach rate (~59%), consistent across every region — this is where the real SLA problem lives, not region or customer.")
+    completed = df[df["status"].isin(["Delivered", "Delayed"])]
+    missing_by_region = completed.groupby("region")["actual_delivery_date"].apply(lambda x: x.isna().sum())
+    total_by_region = completed.groupby("region").size()
+    region_missing = pd.DataFrame({
+        "missing_actual_date": missing_by_region,
+        "total_completed": total_by_region,
+        "pct_missing": (missing_by_region / total_by_region * 100).round(1)
+    }).sort_values("pct_missing", ascending=False)
 
-# ----------------------------------------------------------------------------
-# TAB: Region (Q1)
-# ----------------------------------------------------------------------------
-with tab_region:
-    st.header("Q1: Which region has the worst on-time delivery performance?")
+    st.subheader("Missing delivery dates by region")
+    st.dataframe(region_missing, use_container_width=True)
+    st.warning("**South is excluded from all delivery-performance comparisons** in this dashboard — "
+               "84% of its completed shipments have no delivery date logged, a data pipeline gap, not a "
+               "performance signal.")
 
-    south_completed = df[(df["region"] == "South") & (df["status"].isin(["Delivered", "Delayed"]))]
-    south_missing_pct = south_completed["actual_delivery_date"].isna().mean() * 100
-    st.warning(
-        f"⚠️ **South is excluded from ranking.** {south_missing_pct:.0f}% of its 'completed' shipments "
-        "have no logged actual delivery date — a regional data pipeline gap, not a performance signal. "
-        "Its apparent on-time rate would be computed from only ~124 real records."
-    )
+# ================= TAB 2: REGION / ON-TIME =================
+with tab2:
+    st.header("Q1 — Which region has the worst on-time delivery performance?")
 
     region_summary = reliable.groupby("region").agg(
         n=("shipment_id", "count"),
@@ -83,129 +80,119 @@ with tab_region:
         avg_delay_days=("delay_days", "mean"),
     ).sort_values("breach_pct", ascending=False)
 
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([1, 1])
     with col1:
+        st.subheader("By region (South excluded — see Data Quality tab)")
         st.dataframe(region_summary, use_container_width=True)
         st.bar_chart(region_summary["breach_pct"])
+
+    ct = pd.crosstab(reliable["region"], reliable["delay_days"] > 0)
+    chi2, p, dof, exp = chi2_contingency(ct)
+
     with col2:
-        ct = pd.crosstab(reliable["region"], reliable["delay_days"] > 0)
-        chi2, p, dof, exp = chi2_contingency(ct)
-        st.metric("Chi-square p-value (region vs breach)", f"{p:.3f}")
-        if p >= 0.05:
-            st.caption("Not statistically significant — cannot claim any region is genuinely worse.")
+        st.subheader("Is the regional spread real?")
+        st.metric("Chi-square p-value (region vs. breach)", f"{p:.3f}")
+        if p > 0.05:
+            st.info("**Not statistically significant.** With this data, no region can confidently be "
+                    "called worse than another — the 48.7%–51.7% spread is consistent with noise.")
 
-    st.subheader("So what IS driving differences? — Carrier, not region")
-    st.write("Bad carriers are spread evenly across regions (not concentrated), while carrier-level breach rates vary widely and consistently:")
-    carrier_overall = reliable.groupby("carrier_id").agg(
+    st.subheader("The real driver: carrier, not region")
+    carrier_breach = reliable.groupby("carrier_id").agg(
         n=("shipment_id", "count"),
-        breach_pct=("delay_days", lambda x: round((x > 0).mean() * 100, 1)),
+        breach_pct=("delay_days", lambda x: round((x > 0).mean() * 100, 1))
     ).sort_values("breach_pct", ascending=False)
-    st.dataframe(carrier_overall, use_container_width=True)
-    st.caption("Note: `region` reflects the shipment's *origin* city, not destination.")
+    st.bar_chart(carrier_breach["breach_pct"])
+    st.caption("Carrier breach rates span ~44%–59% — a 15-point spread, 5x wider than the regional spread — "
+               "and this holds consistently across all regions (bad carriers aren't concentrated in one place).")
 
-# ----------------------------------------------------------------------------
-# TAB: Cost vs Distance (Q2)
-# ----------------------------------------------------------------------------
-with tab_cost:
-    st.header("Q2: Freight cost vs. distance — which carrier(s) deviate?")
+# ================= TAB 3: FREIGHT COST =================
+with tab3:
+    st.header("Q2 — Freight cost vs. distance: is there a relationship, and which carrier deviates?")
 
-    df["cost_per_km"] = df["freight_cost"] / df["distance_km"]
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Overall Pearson r (cost vs distance)", round(df['freight_cost'].corr(df['distance_km']), 3))
+    with col2:
+        clean_r = df[df['carrier_id'] != 'CARR_07']
+        st.metric("Pearson r, excluding CARR_07", round(clean_r['freight_cost'].corr(clean_r['distance_km']), 3))
 
-    clean_carriers = df[df["carrier_id"] != "CARR_07"].copy()
-    clean_carriers["predicted_cost"] = np.nan
-    r_by_mode = {}
-    for m in clean_carriers["mode"].unique():
-        mask = clean_carriers["mode"] == m
-        sub = clean_carriers[mask]
+    st.scatter_chart(df, x="distance_km", y="freight_cost", color="mode")
+    st.caption("CARR_07's shipments (visible as the steep separate band) sit far above the rest of the fleet "
+               "at every distance.")
+
+    carr07 = df[df["carrier_id"] == "CARR_07"]
+    others = df[df["carrier_id"] != "CARR_07"]
+    cpk_compare = pd.DataFrame({
+        "CARR_07 avg cost/km": carr07.groupby("mode")["cost_per_km"].mean(),
+        "All other carriers avg cost/km": others.groupby("mode")["cost_per_km"].mean(),
+    })
+    cpk_compare["Ratio"] = (cpk_compare["CARR_07 avg cost/km"] / cpk_compare["All other carriers avg cost/km"]).round(1)
+    st.subheader("CARR_07 vs. everyone else — cost per km by mode")
+    st.dataframe(cpk_compare.round(1), use_container_width=True)
+    st.error("**CARR_07 bills ~10x the normal rate across 100% of its 342 shipments** — a consistent, "
+             "systematic pattern (not a few outliers), most likely a billing/unit error worth verifying at "
+             "the source rather than a genuine premium tier.")
+
+    st.subheader("Every other carrier's deviation from the expected cost curve")
+    clean = df[df["carrier_id"] != "CARR_07"].copy()
+    clean["predicted_cost"] = np.nan
+    for m in clean["mode"].unique():
+        mask = clean["mode"] == m
+        sub = clean[mask]
         slope, intercept = np.polyfit(sub["distance_km"], sub["freight_cost"], 1)
-        clean_carriers.loc[mask, "predicted_cost"] = intercept + slope * sub["distance_km"]
-        r_by_mode[m] = sub["freight_cost"].corr(sub["distance_km"])
-    clean_carriers["pct_deviation"] = (
-        (clean_carriers["freight_cost"] - clean_carriers["predicted_cost"]) / clean_carriers["predicted_cost"] * 100
-    )
+        clean.loc[mask, "predicted_cost"] = intercept + slope * sub["distance_km"]
+    clean["pct_deviation"] = (clean["freight_cost"] - clean["predicted_cost"]) / clean["predicted_cost"] * 100
+    dev = clean.groupby("carrier_id")["pct_deviation"].mean().sort_values(ascending=False)
+    st.bar_chart(dev)
+    st.caption("Excluding CARR_07, every carrier prices within ~1% of the expected distance-based cost — "
+               "no other meaningful pricing deviation in the fleet.")
 
-    c1, c2, c3 = st.columns(3)
-    for col, m in zip([c1, c2, c3], r_by_mode):
-        col.metric(f"{m} cost-distance correlation", f"r = {r_by_mode[m]:.3f}")
-
-    st.error(
-        "🚨 **CARR_07 is excluded from the model above and shown separately.** "
-        "All 342 of its shipments (100%) bill at ~7–13x (avg ~10x) the normal rate "
-        "for their mode — a suspiciously *consistent* multiple, suggesting a systematic "
-        "billing/unit issue rather than genuine pricing variance. Recommend verifying "
-        "against the billing source before treating this as real cost data."
-    )
-
-    st.subheader("Carrier deviation from expected cost (CARR_07 excluded from model fit)")
-    carrier_dev = clean_carriers.groupby("carrier_id").agg(
-        n=("shipment_id", "count"),
-        avg_pct_deviation=("pct_deviation", "mean"),
-    ).sort_values("avg_pct_deviation", ascending=False)
-    st.dataframe(carrier_dev.round(2), use_container_width=True)
-    st.caption("Every one of the other 14 carriers prices within ~1% of the expected cost curve — no meaningful deviation once CARR_07 is set aside.")
-
-    st.subheader("Freight cost vs. distance (colored by mode, CARR_07 excluded)")
-    st.scatter_chart(clean_carriers, x="distance_km", y="freight_cost", color="mode")
-
-# ----------------------------------------------------------------------------
-# TAB: Customers (Q3)
-# ----------------------------------------------------------------------------
-with tab_customer:
-    st.header("Q3: Which customers show the most delivery delays?")
-
-    cust_summary = valid.groupby("customer_id").agg(
-        n=("shipment_id", "count"),
-        n_breach=("delay_days", lambda x: (x > 0).sum()),
-    ).reset_index()
-    cust_summary["breach_pct"] = (cust_summary["n_breach"] / cust_summary["n"] * 100).round(1)
+# ================= TAB 4: CUSTOMER DELAYS =================
+with tab4:
+    st.header("Q3 — Which customer(s) show the most delivery delays?")
 
     overall_rate = (valid["delay_days"] > 0).mean()
-    cust_summary["p_value"] = cust_summary.apply(
-        lambda r: binomtest(r["n_breach"], r["n"], overall_rate, alternative="two-sided").pvalue, axis=1
+    cust = valid.groupby("customer_id").agg(
+        n=("shipment_id", "count"),
+        n_breach=("delay_days", lambda x: (x > 0).sum())
+    ).reset_index()
+    cust["breach_pct"] = (cust["n_breach"] / cust["n"] * 100).round(1)
+    cust["p_value"] = cust.apply(
+        lambda r: binomtest(int(r["n_breach"]), int(r["n"]), overall_rate, alternative="two-sided").pvalue,
+        axis=1
     )
-    sig = cust_summary[cust_summary["p_value"] < 0.05]
+    cust_sorted = cust.sort_values("breach_pct", ascending=False)
 
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("Top 15 customers by raw breach %")
+        st.dataframe(cust_sorted.head(15), use_container_width=True)
+    with col2:
+        n_sig = (cust["p_value"] < 0.05).sum()
+        st.metric("Customers 'significant' at p<0.05", f"{n_sig} / {len(cust)}")
+        st.metric("Expected by chance alone", round(len(cust) * 0.05, 1))
+        st.info("Almost exactly the number expected by chance — **no individual customer is a genuine "
+                "statistical outlier.**")
+
+    st.subheader("Do the top 'worst' customers share a carrier or region?")
+    top4 = cust_sorted.head(4)["customer_id"].tolist()
+    sub = valid[valid["customer_id"].isin(top4)]
     c1, c2 = st.columns(2)
-    c1.metric("Customers tested", len(cust_summary))
-    c2.metric("Statistically significant (p<0.05)", len(sig), help="Expected by chance alone at this threshold: ~6")
+    with c1:
+        st.caption("Region mix")
+        st.dataframe(pd.crosstab(sub["customer_id"], sub["region"]))
+    with c2:
+        st.caption("Carrier mix (top 5 carriers used)")
+        st.dataframe(pd.crosstab(sub["customer_id"], sub["carrier_id"]).sum().sort_values(ascending=False).head())
+    st.caption("No concentration in either — consistent with noise rather than a real customer-, carrier-, "
+               "or region-driven pattern.")
 
-    st.warning(
-        f"⚠️ **{len(sig)} of {len(cust_summary)} customers are 'significant' at p<0.05 — "
-        "almost exactly what random chance alone would produce testing this many groups.** "
-        "This is the signature of no real customer-level effect, not a true finding."
-    )
-
-    st.subheader("Top 15 customers by raw breach rate")
-    st.dataframe(
-        cust_summary.sort_values("breach_pct", ascending=False).head(15),
-        use_container_width=True
-    )
-    st.caption(
-        "These customers' carrier and region mix is close to baseline proportions — "
-        "not concentrated on any single carrier or region. Most consistent with sampling "
-        "noise given each customer only has 20–35 shipments in this dataset."
-    )
-
-# ----------------------------------------------------------------------------
-# TAB: Data Quality (Q4)
-# ----------------------------------------------------------------------------
-with tab_quality:
-    st.header("Q4: Data quality issues found, and how they were handled")
-
-    rows = [
-        ("Exact duplicate rows", quality_report["n_exact_duplicates_dropped"], "Dropped"),
-        ("`delivery_date` == `promised_delivery_date` always", f"{quality_report['delivery_date_equals_promised_pct']}% of rows",
-         "Ignored column entirely; used `actual_delivery_date` as ground truth"),
-        ("`status` disagrees with date-derived delay", quality_report["n_status_vs_date_mismatch"],
-         "All delay/SLA metrics computed from dates, never from `status`"),
-        ("Completed status but missing `actual_delivery_date`", quality_report["n_completed_missing_actual_date"],
-         "Excluded from delay analysis; 100% concentrated in South → flagged as pipeline issue"),
-        ("Impossible dates (delivered before pickup/booking)", quality_report["n_impossible_date_rows"], "Excluded from delay analysis"),
-        ("Missing booking_date", quality_report["n_missing_booking_date"], "Left as-is, doesn't affect delay calcs"),
-        ("Missing pickup_date", quality_report["n_missing_pickup_date"], "Left as-is, doesn't affect delay calcs"),
-        ("Origin city == destination city", quality_report["n_origin_eq_destination"], "Kept, plausibly legitimate, just noted"),
-    ]
-    st.table(pd.DataFrame(rows, columns=["Issue", "Rows affected", "Handling"]))
-
-    st.subheader("Full raw quality report")
-    st.json(quality_report)
+st.divider()
+st.subheader("📌 Recommended weekly metric (Q5)")
+st.markdown("""
+**On-time delivery rate, tracked per carrier — not blended network-wide.**
+Carrier is the only statistically real driver of delay found in this data (15pp spread vs. a
+non-significant 3pp regional spread). A blended company-wide number would hide a specific carrier
+degrading. Pair this with a weekly check on **% of shipments missing `actual_delivery_date`** —
+that's the exact failure mode that silently broke South's data.
+""")
