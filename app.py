@@ -40,14 +40,23 @@ with tab1:
                help="After excluding impossible dates and completed shipments missing an actual delivery date")
     c4.metric("Status vs. date mismatches", quality_report["n_status_vs_date_mismatch"])
 
+    # ---- NEW: split out the status mismatch into its two directions ----
+    has_actual_and_delay = df[df["actual_delivery_date"].notna() & df["delay_days"].notna()]
+    delivered_rows = has_actual_and_delay[has_actual_and_delay["status"] == "Delivered"]
+    delayed_rows = has_actual_and_delay[has_actual_and_delay["status"] == "Delayed"]
+    pct_delivered_actually_late = round((delivered_rows["delay_days"] > 0).mean() * 100, 1) if len(delivered_rows) else 0
+    pct_delayed_actually_ontime = round((delayed_rows["delay_days"] <= 0).mean() * 100, 1) if len(delayed_rows) else 0
+
     st.subheader("Key issues")
     st.markdown(f"""
 - **`delivery_date` is 100% redundant** — it equals `promised_delivery_date` in
   **{quality_report['delivery_date_equals_promised_pct']}%** of rows. It is not used anywhere in this analysis;
   `actual_delivery_date` is the real outcome field.
 - **The `status` label disagrees with date-derived reality** in **{quality_report['n_status_vs_date_mismatch']}**
-  rows — e.g. shipments marked "Delivered" that were actually late per the dates. All on-time/SLA metrics
-  here are computed from dates, never from `status`.
+  rows — and it's not a minor labeling glitch: **{pct_delivered_actually_late}%** of shipments marked
+  "Delivered" were actually late by the date math, and **{pct_delayed_actually_ontime}%** of shipments marked
+  "Delayed" were actually on-time or early. That's close to a coin flip in both directions. All on-time/SLA
+  metrics here are computed from dates, never from `status`.
 - **{quality_report['n_completed_missing_actual_date']} "Delivered"/"Delayed" shipments have no
   `actual_delivery_date` logged** — see below, this is concentrated almost entirely in one region.
 - **{quality_report['n_impossible_date_rows']} rows have logically impossible dates**
@@ -133,6 +142,23 @@ with tab3:
              "systematic pattern (not a few outliers), most likely a billing/unit error worth verifying at "
              "the source rather than a genuine premium tier.")
 
+    # ---- NEW: CARR_07's share of total freight spend vs. its share of volume ----
+    total_spend = df["freight_cost"].sum()
+    carr07_spend = carr07["freight_cost"].sum()
+    carr07_spend_share = round(carr07_spend / total_spend * 100, 1)
+    carr07_volume_share = round(len(carr07) / len(df) * 100, 1)
+
+    sc1, sc2 = st.columns(2)
+    sc1.metric("CARR_07 share of shipment volume", f"{carr07_volume_share}%")
+    sc2.metric("CARR_07 share of total freight spend", f"{carr07_spend_share}%")
+    st.caption(
+        f"CARR_07 accounts for only {carr07_volume_share}% of shipments but **{carr07_spend_share}% of total "
+        "reported freight cost** — purely because of its ~10x per-shipment pricing. If this is a billing/unit "
+        "error, it is currently misstating a large share of reported freight spend; if it's a genuine different "
+        "service tier, it's the single largest cost line in the fleet either way. Verify against the billing "
+        "system before using this figure in any cost or contract decision."
+    )
+
     st.subheader("Every other carrier's deviation from the expected cost curve")
     clean = df[df["carrier_id"] != "CARR_07"].copy()
     clean["predicted_cost"] = np.nan
@@ -144,8 +170,13 @@ with tab3:
     clean["pct_deviation"] = (clean["freight_cost"] - clean["predicted_cost"]) / clean["predicted_cost"] * 100
     dev = clean.groupby("carrier_id")["pct_deviation"].mean().sort_values(ascending=False)
     st.bar_chart(dev)
-    st.caption("Excluding CARR_07, every carrier prices within ~1% of the expected distance-based cost — "
-               "no other meaningful pricing deviation in the fleet.")
+
+    # ---- FIXED: was hardcoded as "~1%", actual average deviation is ~7-8% ----
+    avg_abs_dev = round(clean.groupby("carrier_id")["pct_deviation"].mean().abs().mean(), 1)
+    st.caption(f"Excluding CARR_07, every carrier prices within roughly {avg_abs_dev}% of the expected "
+               "distance-based cost on average — much tighter than CARR_07's ~10x deviation, though not a "
+               "near-zero gap. The remaining spread is likely explained by factors not in this dataset "
+               "(e.g. shipment weight/volume), which isn't captured here.")
 
 # ================= TAB 4: CUSTOMER DELAYS =================
 with tab4:
