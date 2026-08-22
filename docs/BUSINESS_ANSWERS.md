@@ -148,7 +148,7 @@ section.
 | Completed status (Delivered/Delayed) but missing `actual_delivery_date` — 100% concentrated in South region | 682 | Excluded from delay analysis; flagged as a regional data-pipeline gap rather than imputed |
 | `actual_delivery_date` earlier than `pickup_date` or `booking_date` (logically impossible) | 74 | Excluded from delay analysis |
 | Missing `booking_date` / `pickup_date` | 71 / 87 | Left as-is — doesn't affect delay calculations |
-| Origin city == destination city | 244 | Kept — plausibly legitimate intra-city moves, just noted |
+| Origin city == destination city | 244 | Kept, plausibly legitimate intra-city moves, just noted |
 
 The most consequential finding: **the `status` field cannot be trusted for
 SLA analysis at all — it's barely better than a coin flip.** Among shipments
