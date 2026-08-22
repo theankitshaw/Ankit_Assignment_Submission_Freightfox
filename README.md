@@ -1,10 +1,9 @@
-# Shipment Analytics — FreightFox Take-Home Assignment
+# Shipment Analytics : FreightFox Take-Home Assignment , Ankit Shaw
 
 Live dashboard: **[add your Streamlit Cloud URL here after deploying]**
 
 ## What's in this repo
 
-```
 .
 ├── data/shipments.csv              # raw dataset (as provided)
 ├── clean_data.py                   # single source of truth for cleaning + feature logic
@@ -13,35 +12,13 @@ Live dashboard: **[add your Streamlit Cloud URL here after deploying]**
 ├── requirements.txt
 ├── docs/BUSINESS_ANSWERS.md        # written answers to the 5 business questions
 └── README.md                       # this file
-```
 
-## Setup — run locally
-
-```bash
-git clone <this-repo-url>
-cd shipment_analytics
-pip install -r requirements.txt
-
-# Run the analysis notebook
-jupyter notebook notebooks/shipment_analysis.ipynb
-
-# Run the dashboard
-streamlit run app.py
-```
-
-## Deploy (Streamlit Community Cloud)
-
-1. Push this repo to GitHub (public).
-2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub.
-3. "New app" → select this repo → main file path: `app.py` → Deploy.
-4. Copy the generated URL into this README and into your submission.
 
 ## Approach
 
 **Cleaning logic lives in one place.** `clean_data.py` is imported by both the
 notebook and the dashboard, so the two can never disagree on how a metric is
-defined — a common failure mode in take-homes where the notebook says one thing
-and the dashboard shows another.
+defined. 
 
 **I didn't trust the `status` column, and that changed the whole analysis.**
 Early exploration showed `status` disagrees with what actually happened (computed
